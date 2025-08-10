@@ -1,10 +1,6 @@
-// Supabase Edge Function: parse-results
-// Trigger: Storage webhook on bucket `result-uploads`
-// Parses CSV uploads and inserts rows into students, semesters, and subjects tables.
-// Expected CSV columns:
-// roll_no,name,course,semester_number,gpa,credits_earned,subject_code,subject_name,grade
-
-// deno-lint-ignore-file no-explicit-any
+// @ts-nocheck
+/// <reference lib="deno.ns" />
+/// <reference lib="dom" />
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { parse } from "https://deno.land/std@0.177.0/csv/parse.ts";
 import * as XLSX from "https://esm.sh/xlsx@0.18.5?target=deno";
