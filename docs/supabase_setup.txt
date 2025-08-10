@@ -1,0 +1,162 @@
+Supabase Setup Guide for Student & Admin Result Portal
+=======================================================
+
+1) Project Keys (Environment Variables)
+--------------------------------------
+Create .env.local in project root with:
+
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+Do NOT expose the service role to the frontend. Keep it server-side only.
+
+2) Database Schema (Run in SQL Editor)\n--------------------------------------
+-- Extensions
+create extension if not exists "uuid-ossp";
+
+-- Profiles (role management)
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role text not null check (role in ('student','admin')),
+  created_at timestamp with time zone default now()
+);
+
+-- Students
+create table if not exists public.students (
+  id uuid primary key default uuid_generate_v4(),
+  roll_no text unique not null,
+  name text not null,
+  course text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamp with time zone default now()
+);
+
+-- Semesters
+create table if not exists public.semesters (
+  id bigint generated always as identity primary key,
+  student_id uuid not null references public.students(id) on delete cascade,
+  semester_number int not null check (semester_number >= 1),
+  gpa numeric(3,2) not null check (gpa >= 0 and gpa <= 10),
+  credits_earned int not null check (credits_earned >= 0),
+  created_at timestamp with time zone default now()
+);
+
+-- Subjects
+create table if not exists public.subjects (
+  id bigint generated always as identity primary key,
+  semester_id bigint not null references public.semesters(id) on delete cascade,
+  subject_code text not null,
+  subject_name text not null,
+  grade text not null,
+  created_at timestamp with time zone default now()
+);
+
+3) Row Level Security (RLS)
+---------------------------
+alter table public.profiles enable row level security;
+alter table public.students enable row level security;
+alter table public.semesters enable row level security;
+alter table public.subjects enable row level security;
+
+-- Helper function: is_admin
+create or replace function public.is_admin(uid uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = uid and p.role = 'admin'
+  );
+$$;
+
+-- profiles policies
+create policy "admins read profiles"
+  on public.profiles for select
+  using (public.is_admin(auth.uid()));
+
+create policy "admins write profiles"
+  on public.profiles for all
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+-- students policies
+create policy "student reads own student row"
+  on public.students for select
+  using (user_id = auth.uid());
+
+create policy "admins read students"
+  on public.students for select
+  using (public.is_admin(auth.uid()));
+
+create policy "admins write students"
+  on public.students for all
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+-- semesters policies
+create policy "student reads own semesters"
+  on public.semesters for select
+  using (exists (
+    select 1 from public.students s
+    where s.id = semesters.student_id and s.user_id = auth.uid()
+  ));
+
+create policy "admins read semesters"
+  on public.semesters for select
+  using (public.is_admin(auth.uid()));
+
+create policy "admins write semesters"
+  on public.semesters for all
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+-- subjects policies
+create policy "student reads own subjects"
+  on public.subjects for select
+  using (exists (
+    select 1
+    from public.semesters sem
+    join public.students s on s.id = sem.student_id
+    where sem.id = subjects.semester_id and s.user_id = auth.uid()
+  ));
+
+create policy "admins read subjects"
+  on public.subjects for select
+  using (public.is_admin(auth.uid()));
+
+create policy "admins write subjects"
+  on public.subjects for all
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+4) Storage Bucket
+-----------------
+- Create a private bucket named: result-uploads
+- Optional admin-only policy:
+
+create policy "admins manage result-uploads"
+on storage.objects for all
+to authenticated
+using (public.is_admin(auth.uid()) and bucket_id = 'result-uploads')
+with check (public.is_admin(auth.uid()) and bucket_id = 'result-uploads');
+
+5) Create an Admin User (Locally)
+---------------------------------
+- Ensure .env.local has the service role key (server-only):
+  SUPABASE_SERVICE_ROLE_KEY=...
+- Use the helper script:
+
+npm run create:admin -- admin@example.com "secure-password" "Admin User"
+
+Output includes the Admin UUID, and the script also inserts a row into profiles with role 'admin'.
+
+6) App Integration Notes
+------------------------
+- Role-based protection: see src/components/ProtectedRoute.jsx (fetches role from profiles).
+- Supabase client: src/utils/supabaseClient.js.
+- Auth context: src/context/AuthContext.jsx.
+- Tailwind v3 configured with postcss.config.js and tailwind.config.js.
+
+This file captures the exact steps used to configure Supabase for this project.
